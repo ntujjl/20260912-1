@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>顯微大冒險 - 雙人即時對戰</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+      color: #fff;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    #signature {
+      position: fixed; top: 10px; right: 15px; font-size: 12px; color: rgba(255, 255, 255, 0.6); z-index: 999;
+    }
+    .screen {
+      display: none; width: 100%; height: 100%; max-width: 900px; max-height: 600px;
+      padding: 20px; flex-direction: column; justify-content: center; align-items: center;
+      position: relative; background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px);
+      border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .active { display: flex; }
+    h1 { font-size: 2.2rem; margin-bottom: 10px; text-shadow: 0 0 10px #00f2fe; color: #4facfe; text-align: center; }
+    p { margin-bottom: 20px; font-size: 1.1rem; text-align: center; color: #e0e0e0; }
+    input[type="text"] {
+      width: 80%; max-width: 320px; padding: 12px 20px; font-size: 1.2rem; border-radius: 25px;
+      border: 2px solid #4facfe; outline: none; background: rgba(0, 0, 0, 0.3); color: #fff;
+      text-align: center; margin-bottom: 20px; transition: 0.3s;
+    }
+    input[type="text"]:focus { border-color: #00f2fe; box-shadow: 0 0 15px #00f2fe; }
+    .btn {
+      padding: 12px 30px; font-size: 1.2rem; border-radius: 25px; border: none; cursor: pointer;
+      background: linear-gradient(45deg, #00f2fe, #4facfe); color: #fff; font-weight: bold;
+      box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4); transition: 0.2s; margin: 5px; text-decoration: none;
+    }
+    .btn:active { transform: scale(0.95); }
+    .btn-danger { background: linear-gradient(45deg, #ff416c, #ff4b2b); box-shadow: 0 4px 15px rgba(255, 65, 108, 0.4); }
+    .status-tag { font-size: 0.85rem; margin-top: 15px; color: #00ff88; text-shadow: 0 0 5px #00ff88; }
+    
+    /* Lobby */
+    .lobby-header { width: 100%; display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .room-list { width: 100%; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+    .room-card {
+      display: flex; justify-content: space-between; align-items: center; background: rgba(255, 255, 255, 0.1);
+      padding: 15px 20px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    /* HUD & Battle */
+    .hud { width: 100%; display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .player-box { display: flex; align-items: center; gap: 10px; background: rgba(0, 0, 0, 0.4); padding: 8px 15px; border-radius: 20px; }
+    .avatar { font-size: 2rem; }
+    .hp-bar { font-size: 1.2rem; color: #ff4757; }
+    .vs-text { font-size: 1.5rem; font-weight: bold; color: #eccc68; text-shadow: 0 0 8px #eccc68; }
+
+    .question-box {
+      width: 100%; background: rgba(0, 0, 0, 0.4); padding: 20px; border-radius: 16px; margin-bottom: 15px;
+      text-align: center; border: 1px solid rgba(255, 255, 255, 0.1); flex: 1; display: flex; justify-content: center; align-items: center;
+    }
+    .question-text { font-size: 1.4rem; font-weight: bold; line-height: 1.4; color: #fff; }
+    .options-grid { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .option-btn {
+      padding: 15px; font-size: 1.1rem; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.08); color: #fff; cursor: pointer; transition: 0.2s; text-align: left;
+    }
+    .option-btn:hover { background: rgba(79, 172, 254, 0.3); border-color: #4facfe; }
+
+    /* Flash Effect */
+    .flash-hit { animation: flashHit 0.4s ease; }
+    @keyframes flashHit { 0% { background: rgba(255, 65, 108, 0.5); } 100% { background: transparent; } }
+
+    /* Orientation overlay */
+    #orient-overlay {
+      display: none; position: fixed; top:0; left:0; width:100vw; height:100vh; background:#0f2027; z-index:9999;
+      justify-content: center; align-items: center; flex-direction: column; text-align: center; padding:20px;
+    }
+    @media screen and (orientation: portrait) and (max-width: 768px) {
+      #orient-overlay { display: flex; }
+    }
+  </style>
+</head>
+<body>
+  <div id="signature">NTUJJ小站</div>
+
+  <div id="orient-overlay">
+    <div style="font-size: 3rem; margin-bottom: 10px;">↻</div>
+    <h2>請將手機改為橫向模式操作</h2>
+  </div>
+
+  <!-- Screen 1: Login -->
+  <div id="screen-login" class="screen active">
+    <h1>🔬 顯微鏡大冒險</h1>
+    <p>探索微觀世界的奧秘，擊敗對手！</p>
+    <input type="text" id="input-nickname" placeholder="請輸入暱稱 (1-20字)" maxlength="20">
+    <button class="btn" onclick="login()">進入大廳</button>
+    <div class="status-tag" id="login-db-status">連線測試中...</div>
+  </div>
+
+  <!-- Screen 2: Lobby -->
+  <div id="screen-lobby" class="screen">
+    <div class="lobby-header">
+      <div id="lobby-user-info" style="font-weight: bold; color: #4facfe;"></div>
+      <button class="btn" onclick="createRoom()">建立房間</button>
+    </div>
+    <div class="room-list" id="room-list-container">
+      <p style="text-align: center; color: #aaa;">載入房間列表中...</p>
+    </div>
+  </div>
+
+  <!-- Screen 3: Waiting -->
+  <div id="screen-waiting" class="screen">
+    <h1>等待對手加入...</h1>
+    <p>房間已建立，等待第二位玩家進入對戰</p>
+    <div style="font-size: 4rem; margin: 20px; animation: pulse 1.5s infinite;">⏳</div>
+    <button class="btn btn-danger" onclick="cancelRoom()">取消房間</button>
+  </div>
+
+  <!-- Screen 4: Battle -->
+  <div id="screen-battle" class="screen">
+    <div class="hud">
+      <div class="player-box">
+        <span class="avatar" id="p1-avatar">🔬</span>
+        <div>
+          <div id="p1-name" style="font-weight: bold;">玩家 A</div>
+          <div class="hp-bar" id="p1-hp">❤️❤️❤️❤️❤️❤️❤️</div>
+        </div>
+      </div>
+      <div class="vs-text">VS</div>
+      <div class="player-box">
+        <div>
+          <div id="p2-name" style="font-weight: bold; text-align: right;">玩家 B</div>
+          <div class="hp-bar" id="p2-hp">❤️❤️❤️❤️❤️❤️❤️</div>
+        </div>
+        <span class="avatar" id="p2-avatar">🦠</span>
+      </div>
+    </div>
+
+    <div class="question-box" id="q-box">
+      <div class="question-text" id="q-text">題目載入中...</div>
+    </div>
+
+    <div class="options-grid" id="options-container">
+      <button class="option-btn" onclick="submitAnswer(0)"></button>
+      <button class="option-btn" onclick="submitAnswer(1)"></button>
+      <button class="option-btn" onclick="submitAnswer(2)"></button>
+      <button class="option-btn" onclick="submitAnswer(3)"></button>
+    </div>
+  </div>
+
+  <!-- Screen 5: Result -->
+  <div id="screen-result" class="screen">
+    <h1 id="result-title">遊戲結束</h1>
+    <p id="result-desc"></p>
+    <div id="result-emoji" style="font-size: 5rem; margin: 20px;">🏆</div>
+    <button class="btn" onclick="leaveGameToLobby()">回到遊戲大廳</button>
+  </div>
+
+  <script>
+    // 1. Supabase 初始化
+    const SUPABASE_URL = 'https://gyycxawpqdmcvgimiwlg.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd5eWN4YXdwcWRtY3ZnaW1pd2xnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEyMzE3NDIsImV4cCI6MjA1NjgwNzc0Mn0.RzZ5_0E44mC2N3zDExK9L8Z2S8T3I8U4X2V1W2Y3Z4A';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
+    // 2. 題庫與常數
+    const QUESTION_BANK = [
+      { q: "使用顯微鏡觀察細胞時，若畫面太暗，應調整哪一個構造？", options: ["光圈與反光鏡", "粗調節輪", "細調節輪", "物鏡"], ans: 0 },
+      { q: "用高倍物鏡觀察時，如果影像模糊，應該調整哪一個構造？", options: ["細調節輪", "粗调节輪", "載物台", "旋轉盤"], ans: 0 },
+      { q: "顯微鏡下看到的影像為「pq」，則實際標本的字母為何？", options: ["bd", "qb", "dp", "pq"], ans: 0 },
+      { q: "從低倍鏡換成高倍鏡觀察時，視野變化為何？", options: ["視野變暗、範圍變小", "視野變亮、範圍變大", "視野變亮、範圍變小", "視野變暗、範圍變大"], ans: 0 },
+      { q: "製作玻片標本蓋上蓋玻片時，呈45度角蓋上主要是為了避免？", options: ["產生氣泡", "標本移動", "液體溢出", "壓碎標本"], ans: 0 },
+      { q: "顯微鏡的總放大倍率是如何計算的？", options: ["目鏡倍率 × 物鏡倍率", "目鏡倍率 + 物鏡倍率", "目鏡倍率 ÷ 物鏡倍率", "物鏡倍率 × 10"], ans: 0 },
+      { q: "若目鏡為 10X，物鏡為 40X，則放大倍率為多少？", options: ["400倍", "50倍", "40倍", "4000倍"], ans: 0 },
+      { q: "要將視野左上角的細胞移至中央，玻片應往哪個方向移動？", options: ["左上方", "右下方", "右上方", "左下方"], ans: 0 },
+      { q: "觀察洋蔥表皮細胞時，常滴加什麼試劑以方便觀察細胞核？", options: ["亞甲藍液或碘液", "生理食鹽水", "本氏液", "酒精"], ans: 0 },
+      { q: "使用雙筒複式顯微鏡時，首先應先調整什麼？", options: ["眼距與屈光度", "粗調節輪", "光源亮度", "載物台高度"], ans: 0 },
+      { q: "下列哪一種顯微鏡適合觀察立體且不透光的標本？", options: ["解剖顯微鏡", "複式顯微鏡", "電子顯微鏡", "相位差顯微鏡"], ans: 0 },
+      { q: "複式顯微鏡下觀察到的影像性質為何？", options: ["倒立放大肉眼像", "正立放大虛像", "正立縮小實像", "倒立縮小實像"], ans: 0 },
+      { q: "若玻片標本上有氣泡，氣泡在顯微鏡下通常呈現什麼特徵？", options: ["黑邊圓形透明", "完全黑色方形", "呈紅色點狀", "無黑邊呈星狀"], ans: 0 },
+      { q: "低倍鏡切換至高倍鏡時，下列何者不應該再動？", options: ["粗調節輪", "細調節輪", "光圈", "集光器"], ans: 0 },
+      { q: "顯微鏡的「物鏡轉盤」主要功能是什麼？", options: ["更換不同倍率物鏡", "調整光源強度", "移動玻片標本", "調節焦點"], ans: 0 },
+      { q: "用顯微鏡觀察水滴中的單細胞生物，生物向右上方游走，玻片應往哪移才能追蹤？", options: ["右上方", "左下方", "右下方", "左上方"], ans: 0 },
+      { q: "觀察口腔黏膜細胞時，刮取細胞的工具最好使用？", options: ["乾淨牙籤鈍端", "解剖刀片", "鑷子尖端", "玻片邊緣"], ans: 0 },
+      { q: "載玻片與蓋玻片的使用，何者厚度較薄？", options: ["蓋玻片", "載玻片", "兩者一樣薄", "依實驗而定"], ans: 0 },
+      { q: "顯微鏡保養時，擦拭鏡片應使用何種工具？", options: ["拭鏡紙", "衛生紙", "棉布", "眼鏡布"], ans: 0 },
+      { q: "若發現顯微鏡視野中有髒污，轉動目鏡時髒污也隨之轉動，表示髒污在哪？", options: ["目鏡上", "物鏡上", "載玻片上", "反光鏡上"], ans: 0 }
+    ];
+
+    const AVATARS = ['🔬', '🦠', '🧫', '🧪', '🧬', '🐸', '🐱', '🐶'];
+
+    // 3. 全域狀態管理
+    let clientToken = localStorage.getItem('sequence_battle_client_token');
+    if (!clientToken) {
+      clientToken = crypto.randomUUID();
+      localStorage.setItem('sequence_battle_client_token', clientToken);
+    }
+
+    let nickname = '';
+    let currentRoomId = null;
+    let currentSeat = null;
+    let currentQuestionIndex = 0;
+    let lastEventId = null;
+    let heartbeatTimer = null;
+    let disconnectTimer = null;
+    let opponentWasPresent = false;
+    let gameChannel = null;
+    let lobbyChannel = null;
+
+    // 4. UI 畫面切換
+    function showScreen(screenId) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.getElementById(screenId).classList.add('active');
+    }
+
+    // 5. 系統初始化與測試
+    window.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const { data, error } = await supabase.from('rooms').select('count', { count: 'exact', head: true });
+        if (!error) {
+          document.getElementById('login-db-status').innerText = '● 資料庫已連接';
+        } else {
+          document.getElementById('login-db-status').innerText = '連線異常: ' + error.message;
+        }
+      } catch (e) {
+        document.getElementById('login-db-status').innerText = '連線失敗';
+      }
+    });
+
+    // 6. 登入 & 進入 Lobby
+    function login() {
+      const input = document.getElementById('input-nickname').value.trim();
+      if (input.length < 1 || input.length > 20) {
+        alert('請輸入 1 至 20 字的暱稱');
+        return;
+      }
+      nickname = input;
+      document.getElementById('lobby-user-info').innerText = `👤 玩家：${nickname}`;
+      showScreen('screen-lobby');
+      initLobby();
+    }
+
+    // 7. 大廳與 Realtime
+    async function initLobby() {
+      fetchRooms();
+      if (lobbyChannel) supabase.removeChannel(lobbyChannel);
+      lobbyChannel = supabase.channel('public-rooms')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => {
+          fetchRooms();
+        })
+        .subscribe();
+    }
+
+    async function fetchRooms() {
+      try {
+        const { data, error } = await supabase.rpc('list_live_rooms');
+        if (error) throw error;
+        const container = document.getElementById('room-list-container');
+        container.innerHTML = '';
+        if (!data || data.length === 0) {
+          container.innerHTML = '<p style="text-align: center; color: #aaa;">目前沒有等待中的房間，快來建立一個吧！</p>';
+          return;
+        }
+        data.forEach(room => {
+          const card = document.createElement('div');
+          card.className = 'room-card';
+          card.innerHTML = `
+            <div>
+              <strong>${escapeHtml(room.host_nickname)}</strong> 的房間
+              <div style="font-size:0.8rem; color:#aaa;">狀態: 等待對手...</div>
+            </div>
+            <button class="btn" onclick="tryJoinRoom('${room.id}')">加入對戰</button>
+          `;
+          container.appendChild(card);
+        });
+      } catch (err) {
+        console.error('Fetch rooms failed:', err);
+      }
+    }
+
+    // 8. 建立房間 & Heartbeat
+    async function createRoom() {
+      try {
+        const { data, error } = await supabase.rpc('create_room', {
+          p_nickname: nickname,
+          p_client_token: clientToken
+        });
+        if (error) throw error;
+        currentRoomId = data.room_id;
+        currentSeat = 1;
+        showScreen('screen-waiting');
+        startHeartbeat();
+        listenAsHost(currentRoomId);
+      } catch (err) {
+        alert('建立房間失敗: ' + err.message);
+      }
+    }
+
+    function startHeartbeat() {
+      stopHeartbeat();
+      heartbeatTimer = setInterval(async () => {
+        if (currentRoomId && currentSeat === 1) {
+          await supabase.rpc('heartbeat_room', { p_room_id: currentRoomId, p_client_token: clientToken });
+        }
+      }, 3000);
+    }
+
+    function stopHeartbeat() {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+
+    async function cancelRoom() {
+      if (currentRoomId && currentSeat === 1) {
+        await supabase.rpc('cancel_room', { p_room_id: currentRoomId, p_client_token: clientToken });
+      }
+      cleanupAndGoLobby();
+    }
+
+    // 9. 房主監聽 Join Probe & 遊戲啟動
+    function listenAsHost(roomId) {
+      if (gameChannel) supabase.removeChannel(gameChannel);
+      gameChannel = supabase.channel(`game-${roomId}`)
+        .on('broadcast', { event: 'join_probe' }, payload => {
+          gameChannel.send({
+            type: 'broadcast',
+            event: 'host_ack',
+            payload: { probe_id: payload.payload.probe_id }
+          });
+        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'game_state', filter: `room_id=eq.${roomId}` }, payload => {
+          if (payload.new.status === 'playing') {
+            stopHeartbeat();
+            startBattle(payload.new);
+          }
+        })
+        .subscribe();
+    }
+
+    // 10. 加入者握手與加入房間
+    async function tryJoinRoom(roomId) {
+      const probeId = crypto.randomUUID();
+      let acked = false;
+
+      const tempChannel = supabase.channel(`game-${roomId}`);
+      tempChannel.on('broadcast', { event: 'host_ack' }, payload => {
+        if (payload.payload.probe_id === probeId) {
+          acked = true;
+        }
+      }).subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await tempChannel.send({
+            type: 'broadcast',
+            event: 'join_probe',
+            payload: { probe_id: probeId }
+          });
+
+          setTimeout(async () => {
+            supabase.removeChannel(tempChannel);
+            if (acked) {
+              executeJoinRoom(roomId);
+            } else {
+              alert('房主已離開，請選其他房間。');
+              fetchRooms();
+            }
+          }, 2000);
+        }
+      });
+    }
+
+    async function executeJoinRoom(roomId) {
+      try {
+        const { data, error } = await supabase.rpc('join_room', {
+          p_room_id: roomId,
+          p_nickname: nickname,
+          p_client_token: clientToken
+        });
+        if (error) {
+          if (error.message.includes('HOST_OFFLINE')) alert('房主已離開，請選其他房間。');
+          else alert('無法加入房間: ' + error.message);
+          fetchRooms();
+          return;
+        }
+        currentRoomId = roomId;
+        currentSeat = 2;
+        
+        // 抓取初始化 game_state
+        const { data: gs } = await supabase.from('game_state').select('*').eq('room_id', roomId).single();
+        startBattle(gs);
+      } catch (err) {
+        alert('連線失敗');
+      }
+    }
+
+    // 11. 對戰核心與 Presence
+    function startBattle(initialGameState) {
+      showScreen('screen-battle');
+      opponentWasPresent = false;
+
+      // 角色指派
+      const avatar1 = AVATARS[hashSeed(currentRoomId) % AVATARS.length];
+      const avatar2 = AVATARS[(hashSeed(currentRoomId) + 1) % AVATARS.length];
+
+      if (currentSeat === 1) {
+        document.getElementById('p1-avatar').innerText = avatar1;
+        document.getElementById('p2-avatar').innerText = avatar2;
+      } else {
+        document.getElementById('p1-avatar').innerText = avatar2;
+        document.getElementById('p2-avatar').innerText = avatar1;
+      }
+
+      setupGameChannel();
+      renderGameState(initialGameState);
+      loadQuestion();
+    }
+
+    function setupGameChannel() {
+      if (gameChannel) supabase.removeChannel(gameChannel);
+
+      gameChannel = supabase.channel(`game-${currentRoomId}`, {
+        config: { presence: { key: clientToken } }
+      });
+
+      gameChannel
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'game_state', filter: `room_id=eq.${currentRoomId}` }, payload => {
+          renderGameState(payload.new);
+        })
+        .on('presence', { event: 'sync' }, () => {
+          const state = gameChannel.presenceState();
+          const count = Object.keys(state).length;
+          if (count >= 2) {
+            opponentWasPresent = true;
+            if (disconnectTimer) { clearTimeout(disconnectTimer); disconnectTimer = null; }
+          } else if (opponentWasPresent && count < 2) {
+            if (!disconnectTimer) {
+              disconnectTimer = setTimeout(() => {
+                alert('對手已斷線');
+                cleanupAndGoLobby();
+              }, 5000);
+            }
+          }
+        })
+        .subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') {
+            await gameChannel.track({ seat: currentSeat, nickname: nickname });
+          }
+        });
+    }
+
+    // 12. 畫面渲染與勝負
+    function renderGameState(gs) {
+      if (!gs) return;
+
+      const p1IsMe = (currentSeat === 1);
+      const myName = p1IsMe ? gs.player1_name : gs.player2_name;
+      const oppName = p1IsMe ? gs.player2_name : gs.player1_name;
+      const myHp = p1IsMe ? gs.player1_hp : gs.player2_hp;
+      const oppHp = p1IsMe ? gs.player2_hp : gs.player1_hp;
+
+      document.getElementById('p1-name').innerText = myName || '玩家';
+      document.getElementById('p2-name').innerText = oppName || '對手';
+      document.getElementById('p1-hp').innerText = '❤️'.repeat(Math.max(0, myHp));
+      document.getElementById('p2-hp').innerText = '❤️'.repeat(Math.max(0, oppHp));
+
+      // 動畫事件觸發
+      if (gs.last_event_id && gs.last_event_id !== lastEventId) {
+        lastEventId = gs.last_event_id;
+        triggerHitAnimation(gs.last_event_seat === currentSeat, gs.last_event_type);
+      }
+
+      // 勝負判定
+      if (gs.status === 'finished') {
+        setTimeout(() => {
+          showScreen('screen-result');
+          const isWinner = gs.winner_seat === currentSeat;
+          document.getElementById('result-title').innerText = isWinner ? '🎉 勝利！' : '💪 加油！';
+          document.getElementById('result-desc').innerText = isWinner ? '你展現了卓越的顯微鏡知識！' : '再接再厲，下次一定能擊敗對手！';
+          document.getElementById('result-emoji').innerText = isWinner ? '🏆' : '🔬';
+        }, 800);
+      }
+    }
+
+    function triggerHitAnimation(isMyAction, type) {
+      const bContainer = document.getElementById('screen-battle');
+      bContainer.classList.add('flash-hit');
+      setTimeout(() => bContainer.classList.remove('flash-hit'), 400);
+    }
+
+    // 13. 題庫與答題
+    function loadQuestion() {
+      const q = QUESTION_BANK[currentQuestionIndex % QUESTION_BANK.length];
+      document.getElementById('q-text').innerText = q.q;
+      const btns = document.querySelectorAll('.option-btn');
+      q.options.forEach((opt, idx) => {
+        btns[idx].innerText = `${['A','B','C','D'][idx]}. ${opt}`;
+      });
+    }
+
+    async function submitAnswer(optionIndex) {
+      const q = QUESTION_BANK[currentQuestionIndex % QUESTION_BANK.length];
+      const isCorrect = (optionIndex === q.ans);
+
+      currentQuestionIndex++;
+      loadQuestion();
+
+      try {
+        await supabase.rpc('resolve_answer', {
+          p_room_id: currentRoomId,
+          p_client_token: clientToken,
+          p_is_correct: isCorrect
+        });
+      } catch (err) {
+        console.error('Answer submission failed:', err);
+      }
+    }
+
+    // 14. 清理與重置
+    function cleanupAndGoLobby() {
+      stopHeartbeat();
+      if (disconnectTimer) clearTimeout(disconnectTimer);
+      if (gameChannel) supabase.removeChannel(gameChannel);
+      gameChannel = null;
+      currentRoomId = null;
+      currentSeat = null;
+      opponentWasPresent = false;
+      showScreen('screen-lobby');
+      initLobby();
+    }
+
+    function leaveGameToLobby() {
+      cleanupAndGoLobby();
+    }
+
+    // 輔助工具
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function hashSeed(str) {
+      let hash = 0;
+      if (!str) return hash;
+      for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash |= 0;
+      }
+      return Math.abs(hash);
+    }
+
+    // Pagehide 離線補償
+    window.addEventListener('pagehide', () => {
+      if (currentRoomId && currentSeat === 1) {
+        const url = `${SUPABASE_URL}/rest/v1/rpc/cancel_room`;
+        const body = JSON.stringify({ p_room_id: currentRoomId, p_client_token: clientToken });
+        navigator.sendBeacon(url, body);
+      }
+    });
+  </script>
+</body>
+</html>
